@@ -18,11 +18,13 @@ import (
 	"time"
 )
 
-const defaultTestURL1 = "http://www.baidu.com"
-const defaultTestURL2 = "http://www.taobao.com"
-const defaultFrequency = 10
-const defaultTimeout = 1
-const defaultStdout = false
+const (
+	defaultTestURL1 = "https://www.baidu.com"
+	defaultTestURL2 = "https://www.qq.com"
+	defaultFrequency = 10
+	defaultTimeout = 1
+	defaultStdout = false
+)
 
 var (
 	cnt            int
