@@ -1,137 +1,135 @@
-/*
-# HttpHead
-# 2018/11/6
-*/
-
 package main
 
 import (
-	"flag"
-	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"runtime"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
+    "flag"
+    "runtime"
+    "log"
+    "io/ioutil"
+    "net/http"
+    "sync"
+    "strconv"
+    "strings"
+    "time"
 )
 
 const (
-	defaultTestURL1 = "https://www.baidu.com"
-	defaultTestURL2 = "https://www.qq.com"
-	defaultFrequency = 10
-	defaultTimeout = 1
-	defaultStdout = false
+    defaultRepeatTimes = 3
+    defaultTimeout = 1
 )
 
 var (
-	cnt            int
-	fromCfg        string
-	targetWebsites []string
+    repeatTimes 	int
+    fromCfg        	string
+    showDetails     bool
+    taskList        []string
 )
 
-func init() {
-	flag.IntVar(&cnt, "c", defaultFrequency, "[] repeat N times to request the URL.")
-	flag.StringVar(&fromCfg, "f", "", "[] load URLs from file.")
-	runtime.GOMAXPROCS(runtime.NumCPU())
-}
-
 type taskState struct {
-	v   map[string]int
-	mux sync.Mutex
+    v   map[string]int
+    mux sync.Mutex
 }
 
 func (ts *taskState) Inc(key string) {
-	ts.mux.Lock()
-	ts.v[key]++
-	ts.mux.Unlock()
+    ts.mux.Lock()
+    ts.v[key]++
+    ts.mux.Unlock()
 }
 
 func (ts *taskState) Value(key string) int {
-	ts.mux.Lock()
-	defer ts.mux.Unlock()
-	return ts.v[key]
+    ts.mux.Lock()
+    defer ts.mux.Unlock()
+    return ts.v[key]
+}
+
+//Task task
+type Task struct {
+    url string
+    ts taskState
+}
+
+//NewTask new task
+func NewTask(url string) *Task {
+    t := &Task{
+        url: url,
+        ts: taskState{
+            v: make(map[string]int),
+        },
+    }
+
+    return t
+}
+
+//Start task start
+func (t *Task) Start(wg *sync.WaitGroup) {
+    dtStart := time.Now()
+    timeout := time.Duration(defaultTimeout * time.Second)
+    wg.Add(1)
+    defer wg.Done()
+
+    c := http.Client{
+        Timeout: timeout,
+    }
+
+    for i := 0; i < repeatTimes; i++ {
+        if header, err := c.Head(t.url); err != nil {
+            t.ts.Inc("failure")
+            if !showDetails { continue }
+            log.Printf("[%s] %s: failed(%v)", strconv.Itoa(i), t.url, err)
+        } else {
+            if header.StatusCode > 400 {
+                t.ts.Inc("failure")
+                if !showDetails { continue }
+                log.Printf("[%s] %s: %s", strconv.Itoa(i), t.url, header.Status)
+            } else {
+                t.ts.Inc("success")
+                if !showDetails { continue }
+                log.Printf("[%s] %s: %s", strconv.Itoa(i), t.url, header.Status)
+            }
+        }
+    }
+    log.Printf("-> %d %d %s <- %s\n", 
+                t.ts.Value("success"), t.ts.Value("failure"), time.Since(dtStart), t.url)
+}
+
+func init() {
+    flag.IntVar(&repeatTimes, "c", defaultRepeatTimes, "Repeat N times")
+    flag.StringVar(&fromCfg, "f", "", "Load URL list from config file")
+    flag.BoolVar(&showDetails, "s", false, "Show details in stdout")
+    runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func loadDataFromFile(f string) []string {
-	var urls []string
-	data, err := ioutil.ReadFile(f)
-	if err != nil {
-		log.Printf("[E] %s : %v", "ioutil.ReadFile", err)
-		return urls
-	}
-
-	for _, h := range strings.Split(string(data), "\n") {
-		if h == "" {
-			continue
-		}
-		urls = append(urls, h)
-	}
-	return urls
-}
-
-func handleHTTPHeadRequest(cnt int, url string, ch chan string, stat *taskState) {
-	for i := 0; i < cnt; i++ {
-		header, err := http.Head(url)
-		if err != nil {
-			log.Printf("[E] %s : %v", "http.Head", err)
-			stat.Inc("failure")
-			ch <- "[" + strconv.Itoa(i) + "]" + url + " : failed."
-		} else {
-			stat.Inc("success")
-			status := header.Status
-			ch <- "[" + strconv.Itoa(i) + "]" + url + " : " + status
-		}
-	}
-
+    var urls []string
+    if data, err := ioutil.ReadFile(f); err != nil {
+        log.Fatalf("[E] %v", err)
+    } else {
+        for _, h := range strings.Split(string(data), "\n") {
+            if h == "" {
+                continue
+            }
+            urls = append(urls, h)
+        }
+    }
+    
+    return urls
 }
 
 func main() {
-	flag.Parse()
-	if len(flag.Args()) > 0 {
-		targetWebsites = flag.Args()
-	} else if len(fromCfg) > 0 {
-		targetWebsites = loadDataFromFile(fromCfg)
-	} else {
-		targetWebsites = []string{defaultTestURL1, defaultTestURL2}
-	}
+    flag.Parse()
+    if len(flag.Args()) > 0 {
+        taskList = flag.Args()
+    } else if len(fromCfg) > 0 {
+        taskList = loadDataFromFile(fromCfg)
+    } else {
+        log.Fatal("[E] no urls specifiled...")
+    }
 
-	dtStart := time.Now()
-	stat := taskState{v: make(map[string]int)}
-	ch := make(chan string)
-	chTheEnd := make(chan bool)
-
-	for _, url := range targetWebsites {
-		go handleHTTPHeadRequest(cnt, url, ch, &stat)
-	}
-
-	go func() {
-		timer := time.NewTimer(time.Second * defaultTimeout)
-		for {
-			if !timer.Stop() {
-				select {
-				case <-timer.C: //try to drain from the channel
-				default:
-				}
-			}
-			timer.Reset(time.Second * defaultTimeout)
-			select {
-			case msg, ok := <-ch:
-				if ok {
-					fmt.Println(msg)
-					continue
-				}
-				chTheEnd <- true
-			case <-timer.C:
-				log.Printf("timer expired (%ds)", defaultTimeout)
-				chTheEnd <- true
-			}
-		}
-	}()
-
-	<-chTheEnd
-	log.Printf("success: %d, failure: %d, Time Cost: %v\n", stat.Value("success"), stat.Value("failure"), time.Since(dtStart))
+    wg := &sync.WaitGroup{}
+    for _, url := range taskList {
+        task := NewTask(url)
+        go task.Start(wg)
+        time.Sleep(defaultTimeout * time.Second)
+    }
+    wg.Wait()
 
 }
