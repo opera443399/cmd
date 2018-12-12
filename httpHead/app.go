@@ -15,7 +15,6 @@ import (
 const (
 	defaultRepeatTimes = 3
 	defaultTimeout     = 1
-	version            = 0.1
 )
 
 var (
@@ -64,7 +63,6 @@ func NewTask(url string) *Task {
 func (t *Task) Start(wg *sync.WaitGroup) {
 	dtStart := time.Now()
 	timeout := time.Duration(defaultTimeout * time.Second)
-	wg.Add(1)
 	defer wg.Done()
 
 	c := http.Client{
@@ -131,12 +129,15 @@ func main() {
 		log.Fatal("[E] no urls specifiled...")
 	}
 
-    wg := &sync.WaitGroup{}
-    log.Printf("[-]\tSUCCESS\tFAILURE\tTIME\t\tURL")
+	wg := new(sync.WaitGroup)
+	if !showDetails {
+		log.Printf("[-]\tSUCCESS\tFAILURE\tTIME\t\tURL")
+	}
+    
 	for _, url := range taskList {
+		wg.Add(1)
 		task := NewTask(url)
 		go task.Start(wg)
-		time.Sleep(defaultTimeout * time.Second)
 	}
 	wg.Wait()
 
