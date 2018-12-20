@@ -17,13 +17,12 @@
 package main
 
 import (
-	"flag"
-	"io/ioutil"
-	"os"
-
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
@@ -36,15 +35,9 @@ import (
 	"github.com/docker/docker/client"
 )
 
-var port string
-
-var activeAccessToken = map[string]bool{
-	"xxx": true,
-	"yyy": true,
-}
-
 //Project desc a project
 type Project struct {
+	Icon   string `json:"icon"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
 }
@@ -55,26 +48,15 @@ type Projects struct {
 	Data []Project `json:"data"`
 }
 
-var activeProjects = Projects{
-	"dev",
-	[]Project{
-		Project{
-			"demoproject",
-			"1",
-		},
-		Project{
-			"demo1",
-			"0",
-		},
-	},
+//ParseToken save payload from http.Request
+type ParseToken struct {
+	AccessToken string `json:"accessToken"`
 }
 
-// curl 127.0.0.1/index
-func index(w http.ResponseWriter, r *http.Request) {
-	if r, err := json.Marshal(activeProjects); err == nil {
-		log.Println("[query-projects] response:", string(r))
-	}
-	json.NewEncoder(w).Encode(activeProjects)
+//ParseProject save payload from http.Request
+type ParseProject struct {
+	ProjectName string `json:"projectName"`
+	AccessToken string `json:"accessToken"`
 }
 
 //Service A docker swarm service
@@ -92,33 +74,74 @@ type Services struct {
 	Data        []Service `json:"data"`
 }
 
-//ParseProject save payload from http.Request
-type ParseProject struct {
-	ProjectName string `json:"projectName"`
-	AccessToken string `json:"accessToken"`
+var activeAccessToken = map[string]bool{
+	"xxx": true,
+	"yyy": true,
 }
 
-// curl 127.0.0.1/svc
-func handlerServices(w http.ResponseWriter, r *http.Request) {
+//😇
+var activeProjects = Projects{
+	"dev",
+	[]Project{
+		Project{
+			"😇",
+			"demo1",
+			"1",
+		},
+		Project{
+			"😇",
+			"demoproject",
+			"1",
+		},
+	},
+}
+
+// curl 127.0.0.1
+func index(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "EMPTY\n")
+}
+
+// curl -s -X POST -H "Content-Type:application/json" -d '{"accessToken":"xxx"}' 127.0.0.1/project
+func projectHandler(w http.ResponseWriter, r *http.Request) {
+	var data ParseToken
+	payload, _ := ioutil.ReadAll(r.Body)
+	r.Body.Close()
+	if err := json.Unmarshal(payload, &data); err != nil {
+		log.Println("[json] failed to Unmarshal the payload!")
+		return
+	}
+	if _, ok := activeAccessToken[data.AccessToken]; !ok {
+		log.Println("[AccessToken] invalid Token!")
+		return
+	}
+	if r, err := json.Marshal(activeProjects); err == nil {
+		log.Println("[query-projects] response:", string(r))
+	}
+	json.NewEncoder(w).Encode(activeProjects)
+}
+
+// curl -s -X POST -H "Content-Type:application/json" -d '{"accessToken":"xxx","projectName":"demoproject"}' 127.0.0.1/service
+func serviceHandler(w http.ResponseWriter, r *http.Request) {
 	var svcs Services
-	var pp ParseProject
+	var data ParseProject
 
 	env := os.Getenv("APP_RUN_ENV")
 
 	payload, _ := ioutil.ReadAll(r.Body)
 	r.Body.Close()
-	if err := json.Unmarshal(payload, &pp); err != nil {
-		log.Fatal("[json] failed to Unmarshal the payload!")
+	if err := json.Unmarshal(payload, &data); err != nil {
+		log.Println("[json] failed to Unmarshal the payload!")
+		return
 	}
-	if _, ok := activeAccessToken[pp.AccessToken]; !ok {
-		log.Fatal("[AccessToken] invalid Token!")
+	if _, ok := activeAccessToken[data.AccessToken]; !ok {
+		log.Println("[AccessToken] invalid Token!")
+		return
 	}
 
-	servicePrefix := env + "-" + pp.ProjectName
-	log.Printf("[query] AccessToken=%s, ProjectName=%s, serviceFilter=%s", pp.AccessToken, pp.ProjectName, servicePrefix)
+	servicePrefix := env + "-" + data.ProjectName
 
 	svcs.Env = env
-	svcs.ProjectName = pp.ProjectName
+	svcs.ProjectName = data.ProjectName
 
 	cli, err := client.NewEnvClient()
 	if err != nil {
@@ -159,8 +182,10 @@ func handlerServices(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(svcs)
 }
 
+var port string
+
 func init() {
-	flag.StringVar(&port, "port", "8007", "listen to the given port.")
+	flag.StringVar(&port, "port", "80", "listen to the given port.")
 	os.Setenv("APP_RUN_ENV", "dev")
 	os.Setenv("DOCKER_API_VERSION", "1.37")
 }
@@ -168,7 +193,8 @@ func init() {
 func main() {
 	flag.Parse()
 	http.HandleFunc("/", index)
-	http.HandleFunc("/svc", handlerServices)
+	http.HandleFunc("/project", projectHandler)
+	http.HandleFunc("/service", serviceHandler)
 
 	log.Println("Listening on port *:" + port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
